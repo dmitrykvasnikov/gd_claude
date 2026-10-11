@@ -1,0 +1,44 @@
+cabal-version:      3.0
+name:               descent
+version:            0.1.0.0
+synopsis:           Gradient descent and stochastic gradient descent from scratch
+build-type:         Simple
+extra-doc-files:    README.md
+
+common shared
+  default-language: GHC2021
+  ghc-options:      -Wall -O2
+  build-depends:    base >=4.20 && <5
+
+library
+  import:           shared
+  hs-source-dirs:   src
+  exposed-modules:
+    Math
+    Math.Vector
+    Math.Matrix
+    Math.AutoDiff
+    Rng
+    Model
+    Model.Catalog
+    Loss
+    Dataset
+    LeastSquares
+    Descent
+    Pretty
+    Report
+    Runner
+
+executable gd
+  import:           shared
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  other-modules:    Options
+  build-depends:    descent
+
+test-suite spec
+  import:           shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  build-depends:    descent
