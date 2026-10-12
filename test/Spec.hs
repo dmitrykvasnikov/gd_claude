@@ -53,7 +53,7 @@ numericGradient f v = fromList [(f (v ^+^ h i) - f (v ^-^ h i)) / (2 * eps) | i 
 
 -- | Deterministic synthetic dataset for an example.
 dataset :: Example -> Double -> Dataset
-dataset ex sigma = fst (synthesize (exModel ex) (exTruth ex) (exDomain ex) 40 sigma (mkGen 7))
+dataset ex sigma = fst (synthesize (exModel ex) (exTruth ex) (exDomain ex) 40 sigma 0 (mkGen 7))
 
 -- | Example by name (test helper).
 example :: String -> Example
@@ -105,6 +105,9 @@ tests =
   , Test "chunksOf" (chunksOf 3 [1 .. 8 :: Int] == [[1, 2, 3], [4, 5, 6], [7, 8]])
   , Test "csv parsing with header and comments" (fmap length (parseCsv 1 "# comment\nx,y\n1,2\n.5,3\n\n-1,4\n") == Right 3)
   , Test "csv rejects wrong column count" (either (const True) (const False) (parseCsv 2 "1,2\n"))
+  , Test "x-noise keeps targets, moves only inputs" inputNoiseKeepsTargets
+  , Test "x-noise has the requested spread" inputNoiseSpread
+  , Test "x-noise flattens the least squares line" regressionDilution
   , Test "least squares recovers truth" (normalSolution "quadratic" == Just True)
   , Test "GD recovers linear model" (recovers FullBatch "linear" 500 1e-5)
   , Test "SGD recovers linear model" (recovers Stochastic "linear" 200 1e-5)
@@ -138,6 +141,34 @@ lossGradientMatches k = nearV 1e-5 (snd (lossGradient mse m ds theta)) (numericG
     m = exModel ex
     ds = dataset ex 0.1
     theta = exStart ex ^+^ fromList (replicate (paramCount m) 0.3)
+
+-- | Same seed with and without input noise: identical targets, different inputs.
+inputNoiseKeepsTargets :: Bool
+inputNoiseKeepsTargets = sort (map target clean) == sort (map target noisy) && map input clean /= map input noisy
+  where
+    gen sx = fst (synthesize linear (fromList [2.5, -1]) (-2, 2) 40 0.3 sx (mkGen 5))
+    clean = gen 0
+    noisy = gen 0.2
+
+-- | Without target noise the true x of a line is (y - b) / a, so the
+-- measurement errors x̃ - x can be recovered: mean ≈ 0, std ≈ σₓ.
+inputNoiseSpread :: Bool
+inputNoiseSpread = near 0.01 mu 0 && near 0.01 (sqrt var) 0.2
+  where
+    ds = fst (synthesize linear (fromList [2.5, -1]) (-2, 2) 20000 0 0.2 (mkGen 13))
+    errs = [input s ! 0 - (target s + 1) / 2.5 | s <- ds]
+    mu = average errs
+    var = average [(e - mu) ^ (2 :: Int) | e <- errs]
+
+-- | Errors in x bias the fitted slope towards 0 by var(x) / (var(x) + σₓ²):
+-- here x ~ U(-2, 2), var(x) = 4/3, σₓ = 0.5, so the slope 2.5 shrinks to ≈ 2.105.
+regressionDilution :: Bool
+regressionDilution = case normalEquations linear ds >>= solution of
+  Just ls -> near 0.05 (ls ! 0) (2.5 * factor)
+  Nothing -> False
+  where
+    ds = fst (synthesize linear (fromList [2.5, -1]) (-2, 2) 20000 0 0.5 (mkGen 17))
+    factor = (4 / 3) / (4 / 3 + 0.25)
 
 -- | Normal equations recover the true parameters of a noise-free example.
 normalSolution :: String -> Maybe Bool

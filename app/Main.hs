@@ -64,9 +64,10 @@ run c o = do
     Nothing -> do
       let theta = fromMaybe (exTruth ex) truth
           range@(lo, hi) = fromMaybe (exDomain ex) (optRange o)
-          (ds, _) = synthesize m theta range (optSamples o) (optNoise o) (mkGen (optSeed o))
+          (ds, _) = synthesize m theta range (optSamples o) (optNoise o) (optInputNoise o) (mkGen (optSeed o))
           domain = intercalate ", " (inputNames m) ++ " ∈ [" ++ compact lo ++ ", " ++ compact hi ++ "]"
-      pure (ds, Just theta, show (length ds) ++ " synthetic samples, " ++ domain ++ ", noise σ = " ++ compact (optNoise o) ++ ", seed " ++ show (optSeed o))
+          inputNoise = if optInputNoise o > 0 then ", x-noise σₓ = " ++ compact (optInputNoise o) else ""
+      pure (ds, Just theta, show (length ds) ++ " synthetic samples, " ++ domain ++ ", noise σ = " ++ compact (optNoise o) ++ inputNoise ++ ", seed " ++ show (optSeed o))
   when (null ds) (failWith "the dataset is empty")
   let rateFor meth = fromMaybe (defaultRate ex meth) (optRate o)
       epochs = fromMaybe (exEpochs ex) (optEpochs o)

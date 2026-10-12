@@ -26,15 +26,31 @@ data Sample = Sample
 -- | A dataset is a list of samples.
 type Dataset = [Sample]
 
--- | Generate n samples y = f(θ, x) + σ·ε with x uniform in the range and ε
--- standard normal noise (the samples are sorted by x for nicer printing).
--- With σ = 0 the true θ fits perfectly and the loss can reach 0. With noise
--- no θ fits exactly: the best achievable loss is about σ², and the least
--- squares optimum moves slightly away from the true θ.
-synthesize :: Model -> Vector Double -> (Double, Double) -> Int -> Double -> Gen -> (Dataset, Gen)
-synthesize m theta range n sigma g0 = (sortOn (toList . input) samples, g1)
+-- | Generate n samples imitating noisy measurements of y = f(θ, x):
+--
+-- >  x  ~ uniform in the range               the true input
+-- >  y  = f(θ, x) + σ·ε                      measured target, ε ~ N(0, 1)
+-- >  x̃ = x + σₓ·δ                            measured input,  δ ~ N(0, 1)
+--
+-- and record the pairs (x̃, y), sorted by x̃ for nicer printing. The first
+-- argument after n is σ (target noise), the second σₓ (input noise).
+--
+-- With σ = σₓ = 0 the true θ fits perfectly and the loss can reach 0. Target
+-- noise only scatters the points: the best achievable loss is about σ², and
+-- the least squares optimum moves slightly (and randomly) away from the true θ.
+-- Input noise is different: the model is fed x̃ instead of x, which
+-- systematically flattens the fit (for a line the slope shrinks by about
+-- var(x) / (var(x) + σₓ²), "regression dilution"), however many samples you take.
+--
+-- The input noise is drawn from the generator left after all samples, so for
+-- a fixed seed the true inputs and target noise do not depend on σₓ.
+synthesize :: Model -> Vector Double -> (Double, Double) -> Int -> Double -> Double -> Gen -> (Dataset, Gen)
+synthesize m theta range n sigma sigmaX g0 = (sortOn (toList . input) observed, g2)
   where
     (samples, g1) = draws n sample g0
+    (deltas, g2) = draws n (draws (inputDim m) normal) g1
+    observed = zipWith blur samples deltas
+    blur s ds = s {input = input s ^+^ sigmaX *^ fromList ds}
     sample g =
       let (xs, g') = draws (inputDim m) (uniformR range) g
           (e, g'') = normal g'

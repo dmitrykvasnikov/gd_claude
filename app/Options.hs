@@ -5,7 +5,7 @@ module Options
   , usage
   ) where
 
-import Data.Char (isDigit, toLower)
+import Data.Char (isDigit, isSpace, toLower)
 import Descent
 import System.Console.GetOpt
 import Text.Read (readMaybe)
@@ -22,6 +22,7 @@ data Options = Options
   , optLoss :: String
   , optSamples :: Int
   , optNoise :: Double
+  , optInputNoise :: Double
   , optSeed :: Int
   , optTruth :: Maybe [Double]
   , optInit :: Maybe [Double]
@@ -51,6 +52,7 @@ defaults =
     , optLoss = "mse"
     , optSamples = 40
     , optNoise = 0
+    , optInputNoise = 0
     , optSeed = 42
     , optTruth = Nothing
     , optInit = Nothing
@@ -82,6 +84,7 @@ options =
   , Option "l" ["loss"] (ReqArg (\s o -> Right o {optLoss = s}) "NAME") "mse | mae | huber | huber:δ (default: mse)"
   , Option "n" ["samples"] (ReqArg (natural "samples" (\n o -> o {optSamples = n})) "N") "number of synthetic samples (default: 40)"
   , Option "" ["noise"] (ReqArg (nonNegative "noise" (\x o -> o {optNoise = x})) "σ") "gaussian noise added to targets (default: 0)"
+  , Option "" ["x-noise"] (ReqArg (nonNegative "x-noise" (\x o -> o {optInputNoise = x})) "σ") "gaussian noise added to inputs, i.e. error in\nmeasuring x (default: 0)"
   , Option "s" ["seed"] (ReqArg (integer "seed" (\n o -> o {optSeed = n})) "N") "random seed for data and shuffling (default: 42)"
   , Option "" ["truth"] (ReqArg (numbers "truth" (\xs o -> o {optTruth = Just xs})) "a,b,..") "true parameters used to generate data"
   , Option "" ["init"] (ReqArg (numbers "init" (\xs o -> o {optInit = Just xs})) "a,b,..") "initial parameters"
@@ -116,6 +119,7 @@ usage =
       , "  gd -M linear -m gd,sgd              compare GD and SGD on f(x) = a·x + b"
       , "  gd -M quadratic -m sgd -w 10        SGD, wait for a key press every 10 epochs"
       , "  gd -M exp -m all --noise 0.2 -q     only the final results of all methods"
+      , "  gd -M linear --x-noise 0.5 -q       measurement error in x flattens the fit"
       , "  gd -M poly:5 -x -p 500              degree 5 polynomial, show matrices"
       , "  gd -M linear -d points.csv          fit data from a CSV file"
       ]
@@ -134,7 +138,7 @@ parseMethods s = concat <$> traverse one (splitOn ',' (map toLower s))
 -- | Parse an input domain "LO:HI".
 parseRange :: String -> Either String (Double, Double)
 parseRange s = case splitOn ':' s of
-  [a, b] | Just lo <- readMaybe a, Just hi <- readMaybe b, lo < hi -> Right (lo, hi)
+  [a, b] | Just lo <- readNumber a, Just hi <- readNumber b, lo < hi -> Right (lo, hi)
   _ -> Left ("invalid range '" ++ s ++ "', expected LO:HI with LO < HI\n")
 
 -- | Split a string on a separator character.
@@ -145,9 +149,13 @@ splitOn sep s = case break (== sep) s of
 
 -- | Generic numeric option parser with a validity check.
 numberWith :: Read a => String -> (a -> Bool) -> String -> (a -> Options -> Options) -> String -> Update
-numberWith name ok expectation set s o = case readMaybe (normalize s) of
+numberWith name ok expectation set s o = case readNumber s of
   Just x | ok x -> Right (set x o)
   _ -> Left ("--" ++ name ++ ": expected " ++ expectation ++ ", got '" ++ s ++ "'\n")
+
+-- | Read a number, also accepting a leading dot such as ".5" or "-.5".
+readNumber :: Read a => String -> Maybe a
+readNumber = readMaybe . normalize . dropWhile isSpace
   where
     normalize ('.' : r) = "0." ++ r
     normalize ('-' : '.' : r) = "-0." ++ r
@@ -181,6 +189,6 @@ integer name set s o
 
 -- | Option taking a comma separated list of numbers.
 numbers :: String -> ([Double] -> Options -> Options) -> String -> Update
-numbers name set s o = case traverse readMaybe (splitOn ',' s) of
+numbers name set s o = case traverse readNumber (splitOn ',' s) of
   Just xs | not (null xs) -> Right (set xs o)
   _ -> Left ("--" ++ name ++ ": expected comma separated numbers, got '" ++ s ++ "'\n")

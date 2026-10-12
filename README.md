@@ -223,7 +223,38 @@ direction, so constant-rate SGD never settles. Notice also that the learned
 parameters match the **least squares** column, not the **truth** column. With
 noisy data the best fit is not the generating curve.
 
-**4. Ill-conditioning and momentum.**
+**4. Measurement error: noise in y vs noise in x.**
+
+Real measurements are imperfect in both coordinates. `--noise σ` blurs the
+measured targets y, `--x-noise σ` blurs the measured inputs x. They look alike
+in the plot but behave very differently:
+
+```sh
+gd -M linear -q --noise 0.5 -e 300                 # a = 2.521 (truth 2.5): scattered around the truth
+gd -M linear -q --noise 0.5 -e 300 -n 2000         # a = 2.493: more data, closer to the truth
+gd -M linear -q --x-noise 0.5 -e 300               # a = 2.062: the line is flatter
+gd -M linear -q --x-noise 0.5 -e 300 -n 2000       # a = 2.074: more data does not help
+gd -M linear -q --x-noise 0.5 -e 300 -n 2000 --range -6:6 -r 0.02   # a = 2.434: a wider x range does
+```
+
+Noise in y is random in both directions, so with more data it averages out
+and the fit converges to the truth. Noise in x is not harmless in the same way.
+The model is fed x̃ = x + error instead of the true x, and least squares
+(which GD finds exactly, see the `|Δ|` column) then systematically
+underestimates the slope by the factor
+
+```
+var(x) / (var(x) + σₓ²)        here (4/3) / (4/3 + 0.25) ≈ 0.84,  2.5 · 0.84 ≈ 2.1
+```
+
+This is called *regression dilution* or *attenuation bias*. It is not a
+weakness of gradient descent. The loss itself prefers the wrong slope, so no
+optimiser can recover the truth. You can only make the bias small by
+measuring over a range much wider than the error (the last command:
+var(x) = 12, factor ≈ 0.98). The wider range also makes the loss bowl steeper,
+which is why it needs a smaller η.
+
+**5. Ill-conditioning and momentum.**
 
 ```sh
 gd -M cubic -q                              # 948 epochs
@@ -235,7 +266,7 @@ The features x³, x², x, 1 have very different scales, so the loss is a long
 narrow valley. GD must use a small η (for the steep direction) and then crawls
 along the flat one. Momentum builds up speed along the valley.
 
-**5. Local minima (non-convex loss).**
+**6. Local minima (non-convex loss).**
 
 ```sh
 gd -M sine -q                       # converges to a = 2, b = 1.5, c = 0.5
@@ -245,7 +276,7 @@ gd -M sine -q --init 1,3,0 -e 2000  # stuck: ‖∇L‖ ≈ 0 but loss ≈ 1.43
 For `a·sin(b·x + c)` the loss has several valleys. A gradient of zero only
 means "flat here", not "best possible". Where you start decides where you end.
 
-**6. Loss functions.**
+**7. Loss functions.**
 
 ```sh
 gd -M linear -m sgd -l mae -q               # MAE: derivative is always ±1, steps never shrink
@@ -253,7 +284,7 @@ gd -M linear -m sgd -l mae --decay 0.2 -q   # with decay it settles much closer
 gd -M linear --noise 0.3 -l huber:0.5       # Huber: MSE near 0, MAE for large errors
 ```
 
-**7. The linear algebra behind it.**
+**8. The linear algebra behind it.**
 
 ```sh
 gd -M plane -x
@@ -263,7 +294,7 @@ This shows the design matrix X, the normal equations `XᵀX · θ = Xᵀy` and
 their closed-form solution `θ* = (XᵀX)⁻¹Xᵀy`, the exact point gradient
 descent is walking towards.
 
-**8. Step by step.**
+**9. Step by step.**
 
 ```sh
 gd -M linear -m sgd -p 1 -w 1      # one epoch per key press
@@ -283,13 +314,24 @@ gd [OPTIONS]
 |---|---|---|
 | `-M`, `--model NAME` | `quadratic` | `linear`, `quadratic`, `cubic`, `poly:N` (1 ≤ N ≤ 30), `exp`, `sine`, `logistic`, `plane`. Aliases: `line`, `exponential`, `sin`, `sigmoid` |
 | `-n`, `--samples N` | `40` | number of synthetic samples |
-| `--noise σ` | `0` | standard deviation of gaussian noise added to the targets |
+| `--noise σ` | `0` | measurement error in y: standard deviation of gaussian noise added to the targets |
+| `--x-noise σ` | `0` | measurement error in x: standard deviation of gaussian noise added to every input |
 | `--range LO:HI` | per model | input range of the synthetic data, e.g. `--range -3:3` |
 | `--truth a,b,…` | per model | parameters used to generate the data |
 | `--init a,b,…` | per model | starting parameters of descent |
 | `-s`, `--seed N` | `42` | random seed (data generation and shuffling) |
 | `-d`, `--data FILE` | | fit a CSV file instead of synthetic data (see [section 7](#7-using-your-own-data-csv)) |
 | `-l`, `--loss NAME` | `mse` | `mse`, `mae`, `huber` (δ = 1) or `huber:δ` |
+
+Numbers may be written with a leading dot (`.5`, `-.25`) everywhere, including
+the lists of `--truth`, `--init` and the bounds of `--range`.
+
+**How the synthetic data is made.** Each sample draws a true input x uniformly
+from the range, computes the measured target `y = f(truth, x) + σ·ε` and
+the measured input `x̃ = x + σₓ·δ` (ε, δ standard normal), and records
+`(x̃, y)`. Both noise levels default to 0, so by default the data lies exactly
+on the curve. For a fixed seed the true inputs and the target noise do not
+depend on `--x-noise`, so runs with and without it are directly comparable.
 
 ### Algorithm
 
@@ -362,7 +404,8 @@ x,y
 ```
 
 With a CSV file there is no "truth" column. For linear-in-θ models with MSE
-the least squares column is still shown.
+the least squares column is still shown. `--noise` and `--x-noise` only apply
+to synthetic data and are ignored with `-d`.
 
 ---
 
@@ -377,7 +420,7 @@ src/
   Model.hs             the model abstraction f(θ, x)
   Model/Catalog.hs     built-in models and their example problems
   Loss.hs              MSE / MAE / Huber and the empirical risk L(θ)
-  Dataset.hs           synthetic data, CSV parsing, batching
+  Dataset.hs           synthetic data with measurement noise, CSV parsing, batching
   LeastSquares.hs      normal equations: the exact answer for linear models
   Descent.hs           ★ GD, SGD, mini-batch: the algorithm itself
   Rng.hs               random numbers, gaussian noise, shuffling
@@ -461,12 +504,14 @@ waves = linearModel "waves" ["a", "b"] ["x"]
 cabal test
 ```
 
-48 checks cover:
+51 checks cover:
 
 - **linear algebra**: products, transpose, solving with pivoting, singular
   matrices;
 - **automatic differentiation**, compared against finite differences;
 - **the random generator and shuffling**;
+- **measurement noise**: x-noise only moves the inputs, has the requested
+  spread, and flattens the least squares line by the predicted factor;
 - **CSV parsing and output formatting**;
 - **the algorithms themselves**:
   - GD, SGD and mini-batch recover the true parameters on clean data;
